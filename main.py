@@ -5,8 +5,6 @@ FEATURES TO ADD:
  - Keybinds for next test/profile/scrolling
  - Misspelled words shouldn't count toward the WPM
 
-PROPOSED CODE REFACTORS:
-
 BUGS:
  - Cursor y position is +1 when on the last character of a test
 
