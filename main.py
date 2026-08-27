@@ -1,5 +1,7 @@
 """
 FEATURES TO ADD:
+ - Text scrolling for when words are bigger than 4 lines. The cursor should
+ be in the 3rd line when in scrolling mode.
  - Save previous test results in a .json
  - Track progress in that .json
  - Keybinds for next test/profile/scrolling
@@ -22,7 +24,6 @@ import random
 import shutil
 import json
 import time
-import os
 
 term = Terminal()
 terminal_size = shutil.get_terminal_size()
@@ -30,11 +31,13 @@ terminal_size = shutil.get_terminal_size()
 SPACE_CHAR = "•"
 WORDS_FILE = "english.json"
 SMOOTHING_WINDOW = 10
-TARGET_LENGTH = 20
+WORDS_MODE_LEN = 15
+TIME_MODE_LEN = 15
 
 KEYBIND_TIP_COORDS = (0, 0)
-PROGRESS_COORDS = (int(terminal_size.columns / 4), int(terminal_size.lines / 6))
-TARGET_COORDS = (int(terminal_size.columns / 4), int(terminal_size.lines / 6) + 1)
+TEST_SETTINGS_COORDS = (2, 2)
+PROGRESS_COORDS = (int(terminal_size.columns / 4), int(terminal_size.lines / 5))
+TARGET_COORDS = (int(terminal_size.columns / 4), int(terminal_size.lines / 5) + 1)
 TARGET_WIDTH = int(terminal_size.columns / 2)
 RESULT_STATS_COORDS = (1, 1)
 RESULT_GRAPH_COORDS = (1, 5)
@@ -158,13 +161,24 @@ def wrap_chars(text: str, width: int) -> tuple[list[str], tuple[int, int]]:
 
 
 def print_progress(
-    accuracy: float, elapsed: float, wpm: float, PROGRESS_COORDS: tuple[int, int]
+    accuracy: float,
+    elapsed_time: float,
+    wpm: float,
+    test_type: str,
+    TIME_MODE_LEN: int,
+    PROGRESS_COORDS: tuple[int, int],
 ) -> None:
+    if test_type == "time":
+        time_to_print = TIME_MODE_LEN - elapsed_time
+    else:
+        time_to_print = elapsed_time
+
     print(term.move_xy(*PROGRESS_COORDS), end="")
-    print(f"{int(elapsed)} {int(wpm)} {int(accuracy * 100)}% {" "*20}", end="")
+    print(f"{int(time_to_print)} {int(wpm)} {int(accuracy * 100)}% {" "*20}", end="")
 
 
 def print_results_stats(elapsed_time: float, wpm: float, accuracy: float) -> None:
+
     print_aligned(
         f"""Time: {elapsed_time:.2f}s
 WPM:  {int(wpm)}
@@ -175,7 +189,6 @@ Acc:  {int(accuracy * 100)}%""",
 
 def print_results_graph(
     key_wpms: list[float],
-    terminal_size: os.terminal_size,
     RESULT_GRAPH_COORDS: tuple[int, int],
     RESULT_GRAPH_WIDTH: int,
     RESULT_GRAPH_HEIGHT: int,
@@ -193,17 +206,20 @@ def print_results_graph(
     print_aligned(format_results_graph(fig.show()), RESULT_GRAPH_COORDS)
 
 
-def print_aligned(text: str, coords: tuple[int, int]) -> None:
+def print_aligned(text: str, coords: tuple[int, int], is_input: bool = False) -> None:
     split_text = text.split("\n")
     for l in range(len(split_text)):
         print(term.move_xy(coords[0], coords[1] + l), end="")
         print(split_text[l])
+    if is_input:
+        _ = input()
+    return
 
 
 def format_results_graph(graph: str) -> str:
     graph_lines: list[str] = graph.split("\n")
-    graph_lines.pop(0)
-    graph_lines.pop(-1)
+    _ = graph_lines.pop(0)
+    _ = graph_lines.pop(-1)
     max_digit_count = 0
     float_digit_count = 0
     int_digit_count = 0
@@ -224,11 +240,25 @@ def format_results_graph(graph: str) -> str:
     return "\n".join(graph_lines)
 
 
-def check_finished(made_error: int, target: str, typed: str) -> bool:
-    if not made_error and target == typed:
-        return True
-    if len(typed) == len(target) + 1:
-        return True
+def check_finished(
+    made_error: int,
+    target: str,
+    typed: str,
+    test_type: str,
+    elapsed_time: float,
+    start_time: float,
+    TIME_MODE_LEN: int,
+) -> bool:
+    if test_type == "words":
+        if not made_error and target == typed:
+            return True
+        if len(typed) == len(target) + 1:
+            return True
+        return False
+    elif test_type == "time":
+        if elapsed_time >= TIME_MODE_LEN:
+            return True
+        return False
     return False
 
 
@@ -261,18 +291,18 @@ def compute_accuracy(correct_chars: int, incorrect_chars: int) -> float:
     return 0
 
 
-def test() -> None:
+def test(test_type: str) -> None:
     with term.cbreak():
         print(term.clear)
         print("\x1b[6 q", end="", flush=True)  # set bar cursor
 
         try:
             typed_text = ""
-            target_text = get_target_text(TARGET_LENGTH)
+            target_text = get_target_text(WORDS_MODE_LEN)
 
             started = False
             finished = False
-            start = 0
+            start_time = 0
 
             correct_keys = 0
             incorrect_keys = 0
@@ -289,20 +319,22 @@ def test() -> None:
                 if key:
                     key_start_time = time.time()
                     if not started:
-                        start = time.time()
+                        start_time = time.time()
                         started = True
                     if key.is_sequence:
                         if key.name == "KEY_BACKSPACE":
                             if typed_text:
                                 typed_text = typed_text[:-1]
                                 if key_wpms:
-                                    key_wpms.pop()
+                                    _ = key_wpms.pop()
                         continue
 
                     if not key.isprintable():
                         continue
 
                     typed_text += str(key)
+                    if test_type == "time" and len(target_text) - len(typed_text) < 50:
+                        target_text += " " + get_target_text(WORDS_MODE_LEN)
 
                     if prev_key_start_time:
                         key_wpms.append(
@@ -316,24 +348,38 @@ def test() -> None:
                     else:
                         incorrect_keys += 1
 
-                elapsed_time = time.time() - start if started else 0
+                elapsed_time = time.time() - start_time if started else 0
 
                 wpm = compute_wpm(len(typed_text), elapsed_time)
                 accuracy = compute_accuracy(correct_keys, incorrect_keys)
 
                 print(term.clear(), end="")
-                print_progress(accuracy, elapsed_time, wpm, PROGRESS_COORDS)
+                print_progress(
+                    accuracy,
+                    elapsed_time,
+                    wpm,
+                    test_type,
+                    TIME_MODE_LEN,
+                    PROGRESS_COORDS,
+                )
                 made_errors = print_text(
                     target_text, typed_text, TARGET_COORDS, TARGET_WIDTH
                 )
 
-                finished = check_finished(made_errors, target_text, typed_text)
+                finished = check_finished(
+                    made_errors,
+                    target_text,
+                    typed_text,
+                    test_type,
+                    elapsed_time,
+                    start_time,
+                    TIME_MODE_LEN,
+                )
 
             print(term.clear())
             print_results_stats(elapsed_time, wpm, accuracy)
             print_results_graph(
                 key_wpms,
-                terminal_size,
                 RESULT_GRAPH_COORDS,
                 RESULT_GRAPH_WIDTH,
                 RESULT_GRAPH_HEIGHT,
@@ -343,4 +389,9 @@ def test() -> None:
             print("\x1b[0 q", end="", flush=True)  # reset cursor
 
 
-test()
+def start_test(TEST_SETTINGS_COORDS: tuple[int, int]) -> None:
+    text: str = f""
+    print_aligned(text, TEST_SETTINGS_COORDS)
+
+
+test("time")
