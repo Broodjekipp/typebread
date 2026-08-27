@@ -16,18 +16,13 @@ MINOR BUGS/EDGE CASES:
  is half the terminal width)
 """
 
-from dataclasses import dataclass, field
 from blessed import Terminal
 import plotille
-import textwrap
-import numbers
 import random
 import shutil
 import json
 import time
-import math
 import os
-import re
 
 term = Terminal()
 terminal_size = shutil.get_terminal_size()
