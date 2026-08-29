@@ -1,4 +1,6 @@
+from dataclasses import dataclass, field
 from blessed import Terminal
+from blessed.keyboard import Keystroke
 import plotille
 import random
 import shutil
@@ -6,49 +8,69 @@ import json
 import time
 
 term = Terminal()
-terminal_size = shutil.get_terminal_size()
 
 SPACE_CHAR = "•"
 WORDS_FILE = "english.json"
 SMOOTHING_WINDOW = 10
 WORDS_MODE_LEN = 15
-TIME_MODE_LEN = 15
+TIME_MODE_LEN = 10
 REFILL_THRESHOLD = 50
 
-KEYBIND_TIP_COORDS = (0, 0)
-TEST_SETTINGS_COORDS = (2, 2)
-PROGRESS_COORDS = (int(terminal_size.columns / 4), int(terminal_size.lines / 5))
-TARGET_COORDS = (int(terminal_size.columns / 4), int(terminal_size.lines / 5) + 1)
-TARGET_WIDTH = int(terminal_size.columns / 2)
-RESULT_STATS_COORDS = (1, 1)
-RESULT_GRAPH_COORDS = (1, 5)
-RESULT_GRAPH_WIDTH = int(terminal_size.columns / 1.2 - 2)
-RESULT_GRAPH_HEIGHT = int(terminal_size.lines / 3)
+
+@dataclass
+class Layout:
+    terminal_size: tuple[int, int] = field(default_factory=shutil.get_terminal_size)
+    keybind_tip_coords: tuple[int, int] = (0, 0)
+    test_settings_coords: tuple[int, int] = (2, 2)
+    result_stats_coords: tuple[int, int] = (1, 1)
+    result_graph_coords: tuple[int, int] = (1, 5)
+
+    progress_coords: tuple[int, int] = field(init=False)
+    target_coords: tuple[int, int] = field(init=False)
+    target_width: int = field(init=False)
+    result_graph_width: int = field(init=False)
+    result_graph_height: int = field(init=False)
+
+    def __post_init__(self):
+        cols, lines = self.terminal_size
+        self.progress_coords = (cols // 4, lines // 5)
+        self.target_coords = (cols // 4, lines // 5 + 1)
+        self.target_width = cols // 2
+        self.result_graph_width = int(cols / 1.2 - 2)
+        self.result_graph_height = lines // 3
 
 
-def print_keybind_tips(
-    keybinds: list[str], KEYBIND_TIP_COORDS: tuple[int, int]
-) -> None:
-    print_aligned(keybinds, KEYBIND_TIP_COORDS)
+@dataclass
+class TestState:
+    target_text: str
+    typed_text: str = ""
+    started: bool = False
+    start_time: float = 0
+    correct_keys: int = 0
+    incorrect_keys: int = 0
+    key_wpms: list[float] = field(default_factory=list)
+    prev_key_start_time: float = 0
 
 
-def print_text(
-    target: str, typed: str, TARGET_COORDS: tuple[int, int], TARGET_WIDTH: int
-) -> int:
-    wrapped = wrap_chars(target, TARGET_WIDTH)[0]
+def print_keybind_tips(keybinds: list[str], coords: tuple[int, int]) -> None:
+    print_aligned(keybinds, coords)
+
+
+def print_text(target: str, typed: str, coords: tuple[int, int], width: int) -> int:
+    wrapped = wrap_chars(target, width)[0]
     cursor_xy = get_cursor_xy(len(typed), wrapped)
 
     wrapped, made_errors = colorize_text(wrapped, typed)
 
     print_aligned(
         wrapped,
-        TARGET_COORDS,
+        coords,
     )
 
     print(
         term.move_xy(
-            cursor_xy[0] + TARGET_COORDS[0],
-            cursor_xy[1] + TARGET_COORDS[1],
+            cursor_xy[0] + coords[0],
+            cursor_xy[1] + coords[1],
         ),
         end="",
         flush=True,
@@ -146,45 +168,51 @@ def print_progress(
     elapsed_time: float,
     wpm: float,
     test_type: str,
-    TIME_MODE_LEN: int,
-    PROGRESS_COORDS: tuple[int, int],
+    time_mode_len: int,
+    layout: Layout,
 ) -> None:
     if test_type == "time":
-        time_to_print = TIME_MODE_LEN - elapsed_time
+        time_to_print = time_mode_len - elapsed_time
     else:
         time_to_print = elapsed_time
 
-    print(term.move_xy(*PROGRESS_COORDS), end="")
-    print(f"{int(time_to_print)} {int(wpm)} {int(accuracy * 100)}% {" "*20}", end="")
+    print(term.move_xy(*layout.progress_coords), end="")
+    print(f"{int(time_to_print)} {int(wpm)} {int(accuracy * 100)}%", end="")
 
 
-def print_results_stats(elapsed_time: float, wpm: float, accuracy: float) -> None:
-
+def print_results_stats(
+    elapsed_time: float, wpm: float, accuracy: float, coords: tuple[int, int]
+) -> None:
     print_aligned(
         f"""Time: {elapsed_time:.2f}s
 WPM:  {int(wpm)}
 Acc:  {int(accuracy * 100)}%""",
-        RESULT_STATS_COORDS,
+        coords,
     )
 
 
 def print_results_graph(
     key_wpms: list[float],
-    RESULT_GRAPH_COORDS: tuple[int, int],
-    RESULT_GRAPH_WIDTH: int,
-    RESULT_GRAPH_HEIGHT: int,
+    coords: tuple[int, int],
+    width: int,
+    height: int,
+    smoothing_window: int,
 ) -> None:
-    smooth_key_wpms = smoothe_graph(key_wpms, SMOOTHING_WINDOW)
+    if not key_wpms:  # No keypresses in the test
+        print_aligned("(no data - AFK detected)", coords)
+        return
+
+    smooth_key_wpms = smoothe_graph(key_wpms, smoothing_window)
 
     fig = plotille.Figure()
-    fig.width = RESULT_GRAPH_WIDTH
-    fig.height = RESULT_GRAPH_HEIGHT
+    fig.width = width
+    fig.height = height
     fig.set_x_limits(min_=0)
     fig.set_y_limits(min_=0)
     fig.origin = False
     fig.plot(list(range(0, len(smooth_key_wpms))), smooth_key_wpms)
 
-    print_aligned(format_results_graph(fig.show()), RESULT_GRAPH_COORDS)
+    print_aligned(format_results_graph(fig.show()), coords)
 
 
 def print_aligned(
@@ -202,25 +230,29 @@ def print_aligned(
 
 def format_results_graph(graph: str) -> str:
     graph_lines: list[str] = graph.split("\n")
-    _ = graph_lines.pop(0)
-    _ = graph_lines.pop(-1)
+    _ = graph_lines.pop(0)  # Remove top line
+    _ = graph_lines.pop(-1)  # Remove bottom line
     max_digit_count = 0
     float_digit_count = 0
     int_digit_count = 0
     for l in range(len(graph_lines[:-1])):
         split_line = graph_lines[l].split("|")
         number = split_line[0]
-        int_digit_count = len(str(round(float(number))))
+        try:
+            int_digit_count = len(str(round(float(number))))
+        except ValueError:
+            int_digit_count = len(number)
+
         float_digit_count = len(number)
         if int_digit_count > max_digit_count:
-            max_digit_count = int_digit_count
+            max_digit_count = int_digit_count  # Get highest whole digit count
         graph_lines[l] = (
-            f"{str(round(float(number))).ljust(max_digit_count)} |{split_line[1]}"
+            f"{str(round(float(number))).ljust(max_digit_count)} |{split_line[1]}"  # Remove all spaces before the comma and add padding
         )
     graph_lines[-1] = "-" * (
         len(graph_lines[-1]) - float_digit_count + int_digit_count - 8
     )
-    graph_lines.insert(0, "(wpm)")
+    graph_lines.insert(0, "(wpm)")  # Add y label
     return "\n".join(graph_lines)
 
 
@@ -230,7 +262,7 @@ def check_finished(
     typed: str,
     test_type: str,
     elapsed_time: float,
-    TIME_MODE_LEN: int,
+    time_mode_len: int,
 ) -> bool:
     if test_type == "words":
         if not made_error and target == typed:
@@ -239,16 +271,28 @@ def check_finished(
             return True
         return False
     elif test_type == "time":
-        if elapsed_time >= TIME_MODE_LEN:
+        if elapsed_time >= time_mode_len:
             return True
         return False
     return False
 
 
 def get_target_text(word_count: int) -> str:
-    with open(WORDS_FILE, "r") as file:
-        data: dict[str, list[str]] = json.load(file)
-    return " ".join(random.sample(data["words"], k=word_count)).lower()
+    try:
+        with open(WORDS_FILE, "r") as file:
+            data: dict[str, list[str]] = json.load(file)
+    except FileNotFoundError:
+        raise SystemExit(f"Word list not found: {WORDS_FILE}")
+    except json.JSONDecodeError as e:
+        raise SystemExit(f"Invalid JSON in {WORDS_FILE}: {e}")
+
+    words = data.get("words")
+    if not words:
+        raise SystemExit(f"No 'words' key (or empty list) in {WORDS_FILE}")
+    if word_count > len(words):
+        word_count = len(words)
+
+    return " ".join(random.sample(words, k=word_count)).lower()
 
 
 def smoothe_graph(graph: list[float], smoothness: int) -> list[float]:
@@ -274,90 +318,103 @@ def compute_accuracy(correct_chars: int, incorrect_chars: int) -> float:
     return 0
 
 
+def render_results_frame(
+    layout: Layout,
+    state: TestState,
+    smoothing_window: int,
+    elapsed_time: float,
+    wpm: float,
+    accuracy: float,
+):
+    print(term.clear())
+
+    print_results_stats(elapsed_time, wpm, accuracy, layout.result_stats_coords)
+    print_results_graph(
+        state.key_wpms,
+        layout.result_graph_coords,
+        layout.result_graph_width,
+        layout.result_graph_height,
+        smoothing_window,
+    )
+
+
+def handle_key(state: TestState, key: Keystroke, test_type: str) -> None:
+    key_start_time = time.time()
+
+    if not state.started:
+        state.start_time = key_start_time
+        state.started = True
+
+    if key.is_sequence:
+        if key.name == "KEY_BACKSPACE" and state.typed_text:
+            state.typed_text = state.typed_text[:-1]
+            if state.key_wpms:
+                _ = state.key_wpms.pop()
+        return
+
+    if not key.isprintable():
+        return
+
+    state.typed_text += str(key)
+
+    if (
+        test_type == "time"
+        and len(state.target_text) - len(state.typed_text) < REFILL_THRESHOLD
+    ):
+        state.target_text += " " + get_target_text(WORDS_MODE_LEN)
+
+    if state.prev_key_start_time:
+        state.key_wpms.append(
+            compute_wpm(1, key_start_time - state.prev_key_start_time)
+        )
+
+    idx = len(state.typed_text) - 1
+    if idx < len(state.target_text) and state.typed_text[-1] == state.target_text[idx]:
+        state.correct_keys += 1
+    else:
+        state.incorrect_keys += 1
+
+    state.prev_key_start_time = key_start_time
+
+
 def test(test_type: str) -> None:
+    layout = Layout()
+
     with term.cbreak():
         print(term.clear)
         print("\x1b[6 q", end="", flush=True)  # set bar cursor
 
         try:
-            typed_text = ""
-            target_text = get_target_text(WORDS_MODE_LEN)
+            state = TestState(target_text=get_target_text(WORDS_MODE_LEN))
 
-            started = False
             finished = False
-            start_time = 0
-
             first_frame = True
-
-            correct_keys = 0
-            incorrect_keys = 0
-
             made_errors = 0
-
             elapsed_time = 0
             prev_elapsed_time = 0
             wpm = 0
             accuracy = 0
-            key_wpms: list[float] = []
-            key_start_time = 0
-            prev_key_start_time = 0
 
             while not finished:
                 key = term.inkey(timeout=0.05)
                 if key:
-                    key_start_time = time.time()
-                    if not started:
-                        start_time = time.time()
-                        started = True
+                    handle_key(state, key, test_type)
 
-                    if key.is_sequence:
-                        if key.name == "KEY_BACKSPACE":
-                            if typed_text:
-                                typed_text = typed_text[:-1]
-                                if key_wpms:
-                                    _ = key_wpms.pop()
-
-                    elif key.isprintable():
-                        typed_text += str(key)
-                        if (
-                            test_type == "time"
-                            and len(target_text) - len(typed_text) < REFILL_THRESHOLD
-                        ):
-                            target_text += " " + get_target_text(WORDS_MODE_LEN)
-
-                        if prev_key_start_time:
-                            key_wpms.append(
-                                compute_wpm(1, key_start_time - prev_key_start_time)
-                            )
-                        prev_key_start_time = key_start_time
-                        idx = len(typed_text) - 1
-                        if (
-                            idx < len(target_text)
-                            and typed_text[-1] == target_text[idx]
-                        ):
-                            correct_keys += 1
-                            prev_key_start_time = key_start_time
-                        else:
-                            incorrect_keys += 1
-
-                elapsed_time = time.time() - start_time if started else 0
-
-                wpm = compute_wpm(len(typed_text), elapsed_time)
-                accuracy = compute_accuracy(correct_keys, incorrect_keys)
+                elapsed_time = time.time() - state.start_time if state.started else 0
+                wpm = compute_wpm(len(state.typed_text), elapsed_time)
+                accuracy = compute_accuracy(state.correct_keys, state.incorrect_keys)
 
                 print(term.clear(), end="")
 
                 if key or first_frame or int(elapsed_time) != int(prev_elapsed_time):
                     print_progress(
-                        accuracy,
-                        elapsed_time,
-                        wpm,
-                        test_type,
-                        TIME_MODE_LEN,
-                        PROGRESS_COORDS,
+                        accuracy, elapsed_time, wpm, test_type, TIME_MODE_LEN, layout
                     )
                     made_errors = print_text(
-                        target_text, typed_text, TARGET_COORDS, TARGET_WIDTH
+                        state.target_text,
+                        state.typed_text,
+                        layout.target_coords,
+                        layout.target_width,
                     )
                     first_frame = False
 
@@ -365,29 +422,25 @@ def test(test_type: str) -> None:
 
                 finished = check_finished(
                     made_errors,
-                    target_text,
-                    typed_text,
+                    state.target_text,
+                    state.typed_text,
                     test_type,
                     elapsed_time,
                     TIME_MODE_LEN,
                 )
 
-            print(term.clear())
-            print_results_stats(elapsed_time, wpm, accuracy)
-            print_results_graph(
-                key_wpms,
-                RESULT_GRAPH_COORDS,
-                RESULT_GRAPH_WIDTH,
-                RESULT_GRAPH_HEIGHT,
+            render_results_frame(
+                layout, state, SMOOTHING_WINDOW, elapsed_time, wpm, accuracy
             )
 
+        except KeyboardInterrupt:
+            pass
         finally:
             print("\x1b[0 q", end="", flush=True)  # reset cursor
 
 
-def start_test(TEST_SETTINGS_COORDS: tuple[int, int]) -> None:
-    text: str = f""
-    print_aligned(text, TEST_SETTINGS_COORDS)
+def start_test(coords: tuple[int, int]) -> None:
+    print_aligned("", coords)
 
 
 test("time")
