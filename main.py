@@ -10,6 +10,7 @@ import time
 term = Terminal()
 
 SPACE_CHAR = "•"
+WORDS_DIR = "words"
 WORDS_FILE = "english.json"
 SMOOTHING_WINDOW = 10
 WORDS_MODE_LEN = 15
@@ -279,7 +280,7 @@ def check_finished(
 
 def get_target_text(word_count: int) -> str:
     try:
-        with open(WORDS_FILE, "r") as file:
+        with open(f"{WORDS_DIR}/{WORDS_FILE}", "r") as file:
             data: dict[str, list[str]] = json.load(file)
     except FileNotFoundError:
         raise SystemExit(f"Word list not found: {WORDS_FILE}")
