@@ -127,7 +127,7 @@ def get_cursor_xy(char_count: int, wrapped: list[str]) -> tuple[int, int]:
 
         line_count += 1
 
-    return row_count, line_count
+    return row_count, line_count - 1
 
 
 def wrap_chars(text: str, width: int) -> tuple[list[str], tuple[int, int]]:
