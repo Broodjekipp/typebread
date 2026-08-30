@@ -307,6 +307,49 @@ def smoothe_graph(graph: list[float], smoothness: int) -> list[float]:
     return smooth_graph
 
 
+def categorize_chars(target: str, typed: str) -> tuple[list[int], list[int], list[int]]:
+    correct_chars: list[int] = []
+    incorrect_chars: list[int] = []
+    untyped_chars: list[int] = []
+
+    for typed_idx in range(len(target)):
+        if typed_idx < len(typed):
+            typed_char = typed[typed_idx]
+            target_char = target[typed_idx]
+
+            if typed_char == target_char:
+                correct_chars.append(typed_idx)
+            else:
+                incorrect_chars.append(typed_idx)
+
+        else:
+            untyped_chars.append(typed_idx)
+
+    return correct_chars, incorrect_chars, untyped_chars
+
+
+def remove_incorrect_words(text: str, incorrect_chars: list[int]) -> str:
+    incorrect_set = set(incorrect_chars)
+    words = text.split(" ")
+
+    kept_words: list[str] = []
+    offset = 0
+
+    for word in words:
+        word_range = range(offset, offset + len(word))
+        if not any(idx in incorrect_set for idx in word_range):
+            kept_words.append(word)
+        offset += len(word) + 1
+
+    return " ".join(kept_words)
+
+
+def compute_correct_wpm(target: str, typed: str, elapsed: float) -> float:
+    _, incorrect_chars, untyped_chars = categorize_chars(target, typed)
+    correct_words = remove_incorrect_words(target, incorrect_chars + untyped_chars)
+    return compute_wpm(len(correct_words), elapsed)
+
+
 def compute_wpm(chars: int, elapsed: float) -> float:
     if elapsed and chars:
         return chars / 5 / (elapsed / 60)
@@ -402,7 +445,9 @@ def test(test_type: str) -> None:
                     handle_key(state, key, test_type)
 
                 elapsed_time = time.time() - state.start_time if state.started else 0
-                wpm = compute_wpm(len(state.typed_text), elapsed_time)
+                wpm = compute_correct_wpm(
+                    state.target_text, state.typed_text, elapsed_time
+                )
                 accuracy = compute_accuracy(state.correct_keys, state.incorrect_keys)
 
                 print(term.clear(), end="")
