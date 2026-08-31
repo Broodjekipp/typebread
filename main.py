@@ -12,6 +12,7 @@ term = Terminal()
 SPACE_CHAR = "•"
 WORDS_DIR = "words"
 WORDS_FILE = "english.json"
+PROGRESS_FILE = "progress.json"
 SMOOTHING_WINDOW = 10
 WORDS_MODE_LEN = 15
 TIME_MODE_LEN = 10
@@ -421,6 +422,38 @@ def handle_key(state: TestState, key: Keystroke, test_type: str) -> None:
     state.prev_key_start_time = key_start_time
 
 
+def save_results(
+    path: str, timestamp: float, acc: float, wpm: float, test_type: str, test_len: int
+) -> None:
+    file_data = open_json(path)
+    test_data = {
+        "acc": acc,
+        "wpm": wpm,
+        "mode": f"{test_type} {test_len}",
+        "datetime": timestamp,
+    }
+    next_id = max((int(k) for k in file_data), default=-1) + 1
+    file_data[next_id] = test_data
+    write_json(path, file_data)
+
+
+def open_json(path: str) -> dict[int, dict[str, int | float | str]]:
+    try:
+        with open(path) as f:
+            raw = json.load(f)
+    except FileNotFoundError:
+        return {}
+    except json.JSONDecodeError:
+        raise SyntaxError("Progress file is wrong or corrupted.")
+
+    return {int(k): v for k, v in raw.items()}
+
+
+def write_json(path: str, data: dict[int, dict[str, int | float | str]]) -> None:
+    with open(path, "w") as f:
+        json.dump(data, f)
+
+
 def test(test_type: str) -> None:
     layout = Layout()
 
@@ -478,6 +511,8 @@ def test(test_type: str) -> None:
             render_results_frame(
                 layout, state, SMOOTHING_WINDOW, elapsed_time, wpm, accuracy
             )
+            test_len = WORDS_MODE_LEN if test_type == "words" else TIME_MODE_LEN
+            save_results(PROGRESS_FILE, time.time(), accuracy, wpm, test_type, test_len)
 
         except KeyboardInterrupt:
             pass
