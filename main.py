@@ -169,7 +169,7 @@ def wrap_chars(text: str, width: int) -> tuple[list[str], tuple[int, int]]:
         if line_len + add_len > width:
             if current_line_words:
                 lines.append(" ".join("".join(w) for w in current_line_words) + " ")
-            current = [word]
+            current_line_words = [word]
             line_len = word_len
         else:
             current_line_words.append(word)
@@ -235,7 +235,7 @@ def print_results_graph(
         print_aligned("(no data - AFK detected)", coords)
         return
 
-    smooth_wpm_samples = smooth_wpm_samples(wpm_samples, smoothing_window)
+    smoothed = smooth_wpm_samples(wpm_samples, smoothing_window)
 
     fig = plotille.Figure()
     fig.width = width
@@ -243,7 +243,7 @@ def print_results_graph(
     fig.set_x_limits(min_=0)
     fig.set_y_limits(min_=0)
     fig.origin = False
-    fig.plot(list(range(0, len(smooth_wpm_samples))), smooth_wpm_samples)
+    fig.plot(list(range(0, len(smoothed))), smoothed)
 
     print_aligned(format_results_graph(fig.show()), coords)
 
