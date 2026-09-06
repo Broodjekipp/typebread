@@ -14,9 +14,9 @@ WORDS_DIR = "words"
 WORDS_FILE = "english.json"
 PROGRESS_FILE = "progress.json"
 SMOOTHING_WINDOW = 10
-WORDS_MODE_LEN = 15
-TIME_MODE_LEN = 10
-REFILL_THRESHOLD = 50
+WORDS_MODE_LEN = 30
+TIME_MODE_LEN = 30
+REFILL_THRESHOLD = 100
 
 
 @dataclass
@@ -26,6 +26,8 @@ class Layout:
     test_settings_coords: tuple[int, int] = (2, 2)
     result_stats_coords: tuple[int, int] = (1, 1)
     result_graph_coords: tuple[int, int] = (1, 5)
+    target_height: int = 4
+    target_upper_cursor_padding: int = 1
 
     progress_coords: tuple[int, int] = field(init=False)
     target_coords: tuple[int, int] = field(init=False)
@@ -50,20 +52,32 @@ class TestState:
     start_time: float = 0
     correct_keys: int = 0
     incorrect_keys: int = 0
-    key_wpms: list[float] = field(default_factory=list)
-    prev_key_start_time: float = 0
+    wpm_samples: list[float] = field(default_factory=list)
 
 
 def print_keybind_tips(keybinds: list[str], coords: tuple[int, int]) -> None:
     print_aligned(keybinds, coords)
 
 
-def print_text(target: str, typed: str, coords: tuple[int, int], width: int) -> int:
+def print_text(
+    target: str,
+    typed: str,
+    coords: tuple[int, int],
+    width: int,
+    target_height: int,
+    upper_pad: int,
+) -> int:
     wrapped = wrap_chars(target, width)[0]
     cursor_xy = get_cursor_xy(len(typed), wrapped)
 
     wrapped, made_errors = colorize_text(wrapped, typed)
 
+    wrapped, cursor_xy = text_scroll(
+        wrapped.split("\n"),
+        target_height,
+        cursor_xy,
+        upper_pad,
+    )
     print_aligned(
         wrapped,
         coords,
@@ -145,7 +159,7 @@ def wrap_chars(text: str, width: int) -> tuple[list[str], tuple[int, int]]:
         words[word_count].append(char)
 
     lines: list[str] = []
-    current: list[list[str]] = []
+    current_line_words: list[list[str]] = []
     line_len: int = 0
 
     for word in words:
@@ -153,16 +167,33 @@ def wrap_chars(text: str, width: int) -> tuple[list[str], tuple[int, int]]:
         word_len = term.length(word_str)
         add_len = word_len if line_len == 0 else word_len + 1
         if line_len + add_len > width:
-            if current:
-                lines.append(" ".join("".join(w) for w in current) + " ")
+            if current_line_words:
+                lines.append(" ".join("".join(w) for w in current_line_words) + " ")
             current = [word]
             line_len = word_len
         else:
-            current.append(word)
+            current_line_words.append(word)
             line_len += add_len
 
-    lines.append(" ".join("".join(w) for w in current))
+    lines.append(" ".join("".join(w) for w in current_line_words))
     return lines, (len(lines[-1]), len(lines))
+
+
+def text_scroll(
+    text: list[str],
+    target_height: int,
+    cursor_xy: tuple[int, int],
+    upper_pad: int,
+) -> tuple[list[str], tuple[int, int]]:
+    if len(text) <= target_height:
+        return text, cursor_xy
+
+    top_line = max(0, cursor_xy[1] - upper_pad)
+    line_window = text[top_line : top_line + target_height]
+
+    new_cursor_y = cursor_xy[1] - top_line
+
+    return line_window, (cursor_xy[0], new_cursor_y)
 
 
 def print_progress(
@@ -194,17 +225,17 @@ Acc:  {int(accuracy * 100)}%""",
 
 
 def print_results_graph(
-    key_wpms: list[float],
+    wpm_samples: list[float],
     coords: tuple[int, int],
     width: int,
     height: int,
     smoothing_window: int,
 ) -> None:
-    if not key_wpms:  # No keypresses in the test
+    if not wpm_samples:  # No keypresses in the test
         print_aligned("(no data - AFK detected)", coords)
         return
 
-    smooth_key_wpms = smoothe_graph(key_wpms, smoothing_window)
+    smooth_wpm_samples = smooth_wpm_samples(wpm_samples, smoothing_window)
 
     fig = plotille.Figure()
     fig.width = width
@@ -212,7 +243,7 @@ def print_results_graph(
     fig.set_x_limits(min_=0)
     fig.set_y_limits(min_=0)
     fig.origin = False
-    fig.plot(list(range(0, len(smooth_key_wpms))), smooth_key_wpms)
+    fig.plot(list(range(0, len(smooth_wpm_samples))), smooth_wpm_samples)
 
     print_aligned(format_results_graph(fig.show()), coords)
 
@@ -259,15 +290,16 @@ def format_results_graph(graph: str) -> str:
 
 
 def check_finished(
-    made_error: int,
+    made_errors: int,
     target: str,
     typed: str,
     test_type: str,
     elapsed_time: float,
     time_mode_len: int,
 ) -> bool:
+
     if test_type == "words":
-        if not made_error and target == typed:
+        if not made_errors and target == typed:
             return True
         if len(typed) == len(target) + 1:
             return True
@@ -297,7 +329,7 @@ def get_target_text(word_count: int) -> str:
     return " ".join(random.sample(words, k=word_count)).lower()
 
 
-def smoothe_graph(graph: list[float], smoothness: int) -> list[float]:
+def smooth_wpm_samples(graph: list[float], smoothness: int) -> list[float]:
     smooth_graph: list[float] = []
     for i in range(len(graph)):
         avg_range = graph[
@@ -375,7 +407,7 @@ def render_results_frame(
 
     print_results_stats(elapsed_time, wpm, accuracy, layout.result_stats_coords)
     print_results_graph(
-        state.key_wpms,
+        state.wpm_samples,
         layout.result_graph_coords,
         layout.result_graph_width,
         layout.result_graph_height,
@@ -393,8 +425,6 @@ def handle_key(state: TestState, key: Keystroke, test_type: str) -> None:
     if key.is_sequence:
         if key.name == "KEY_BACKSPACE" and state.typed_text:
             state.typed_text = state.typed_text[:-1]
-            if state.key_wpms:
-                _ = state.key_wpms.pop()
         return
 
     if not key.isprintable():
@@ -408,18 +438,11 @@ def handle_key(state: TestState, key: Keystroke, test_type: str) -> None:
     ):
         state.target_text += " " + get_target_text(WORDS_MODE_LEN)
 
-    if state.prev_key_start_time:
-        state.key_wpms.append(
-            compute_wpm(1, key_start_time - state.prev_key_start_time)
-        )
-
     idx = len(state.typed_text) - 1
     if idx < len(state.target_text) and state.typed_text[-1] == state.target_text[idx]:
         state.correct_keys += 1
     else:
         state.incorrect_keys += 1
-
-    state.prev_key_start_time = key_start_time
 
 
 def save_results(
@@ -483,9 +506,8 @@ def test(test_type: str) -> None:
                 )
                 accuracy = compute_accuracy(state.correct_keys, state.incorrect_keys)
 
-                print(term.clear(), end="")
-
                 if key or first_frame or int(elapsed_time) != int(prev_elapsed_time):
+                    print(term.clear(), end="")
                     print_progress(
                         accuracy, elapsed_time, wpm, test_type, TIME_MODE_LEN, layout
                     )
@@ -494,8 +516,13 @@ def test(test_type: str) -> None:
                         state.typed_text,
                         layout.target_coords,
                         layout.target_width,
+                        layout.target_height,
+                        layout.target_upper_cursor_padding,
                     )
                     first_frame = False
+
+                if int(elapsed_time) != int(prev_elapsed_time):
+                    state.wpm_samples.append(wpm)
 
                 prev_elapsed_time = elapsed_time
 
