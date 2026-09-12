@@ -29,6 +29,8 @@ class Layout:
     target_height: int = 4
     target_upper_cursor_padding: int = 1
 
+    profile_coords: tuple[int, int] = field(init=False)
+    profile_width: int = field(init=False)
     progress_coords: tuple[int, int] = field(init=False)
     target_coords: tuple[int, int] = field(init=False)
     target_width: int = field(init=False)
@@ -37,6 +39,8 @@ class Layout:
 
     def __post_init__(self):
         cols, lines = self.terminal_size
+        self.profile_coords = (cols // 10, lines // 10)
+        self.profile_width = cols // 10 * 8
         self.progress_coords = (cols // 4, lines // 5)
         self.target_coords = (cols // 4, lines // 5 + 1)
         self.target_width = cols // 2
@@ -260,6 +264,25 @@ def print_aligned(
         _ = input()
     return
 
+""" Layout overview:
+Tests Started: 1327 
+Total length typed: 5:34:75
+Records:
+    15s:  79
+    30s:  66
+    60s:  43
+    120s: - 
+
+[INSERT GIANT GRAPH OF TEST RESULTS]
+
+"""
+def print_overview(layout) -> None:
+    pass
+
+
+def get_stats_from_progress_file() -> tuple[float, float, str, float]:
+    raise NotImplementedError
+
 
 def format_results_graph(graph: str) -> str:
     graph_lines: list[str] = graph.split("\n")
@@ -454,6 +477,7 @@ def save_results(
         "wpm": wpm,
         "mode": f"{test_type} {test_len}",
         "datetime": timestamp,
+        "time": test_len
     }
     next_id = max((int(k) for k in file_data), default=-1) + 1
     file_data[next_id] = test_data
