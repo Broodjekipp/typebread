@@ -3,7 +3,7 @@ A terminal-based typing test, written fully in Python, inspired by [Monkeytype](
 
 ### Features:
 - WPM and accuracy calculation
-- Cool [plottile](https://pypi.org/project/plotille/) graph
+- Cool graph
 - Results saving (not viewing yet, but it'll come)
 
 ---
