@@ -1,15 +1,15 @@
 from dataclasses import dataclass, field
-from blessed.keyboard import Keystroke
-from blessed import Terminal
 from typing import cast
+import termios
 import random
 import shutil
+import select
 import json
 import time
+import sys
+import tty
 
 from graph import make_data_graph, format_results_graph
-
-term = Terminal()
 
 SPACE_CHAR = "•"
 WORDS_DIR = "words"
@@ -89,13 +89,10 @@ def print_text(
         coords,
     )
 
-    print(
-        term.move_xy(
-            cursor_xy[0] + coords[0],
-            cursor_xy[1] + coords[1],
-        ),
-        end="",
-        flush=True,
+    move_cursor(
+        cursor_xy[0] + coords[0],
+        cursor_xy[1] + coords[1],
+        flush=True
     )
 
     return made_errors
@@ -115,17 +112,19 @@ def colorize_text(target_split: list[str], typed: str) -> tuple[str, int]:
 
                 if typed_char == target_char:
                     colorized_line.append(
-                        term.green(SPACE_CHAR if target_char == " " else target_char)
+                        f"\033[32m{SPACE_CHAR if target_char == " " else target_char}"
                     )
                 else:
                     colorized_line.append(
-                        term.red(SPACE_CHAR if target_char == " " else target_char)
+                        f"\033[31m{SPACE_CHAR if target_char == " " else target_char}"
                     )
                     made_errors += 1
 
                 typed_index += 1
             else:
-                colorized_line.append(SPACE_CHAR if target_char == " " else target_char)
+                colorized_line.append(
+                    f"\033[39m{SPACE_CHAR if target_char == " " else target_char}"
+                )
 
         colorized_lines.append("".join(colorized_line))
 
@@ -137,10 +136,9 @@ def get_cursor_xy(char_count: int, wrapped: list[str]) -> tuple[int, int]:
     row_count = 0
 
     for line in wrapped:
-        stripped_line = term.strip_seqs(line)
         row_count = 0
 
-        for _ in stripped_line:
+        for _ in line:
             if char_count == 0:
                 return row_count, line_count
             row_count += 1
@@ -170,7 +168,7 @@ def wrap_chars(text: str, width: int) -> tuple[list[str], tuple[int, int]]:
 
     for word in words:
         word_str = "".join(word)
-        word_len = term.length(word_str)
+        word_len = len(word_str)
         add_len = word_len if line_len == 0 else word_len + 1
         if line_len + add_len > width:
             if current_line_words:
@@ -202,6 +200,14 @@ def text_scroll(
     return line_window, (cursor_xy[0], new_cursor_y)
 
 
+def move_cursor(x: int, y: int, flush: bool = False) -> None:
+    print(f"\033[{y};{x}H", end="", flush=flush)
+
+
+def clear_terminal():
+    print(chr(27) + "[2J")
+
+
 def print_progress(
     accuracy: float,
     elapsed_time: float,
@@ -215,7 +221,7 @@ def print_progress(
     else:
         time_to_print = elapsed_time
 
-    print(term.move_xy(*layout.progress_coords), end="")
+    move_cursor(*layout.progress_coords)
     print(f"{int(time_to_print)} {int(wpm)} {int(accuracy * 100)}%", end="")
 
 
@@ -251,7 +257,7 @@ def print_aligned(
     if type(text) == str:
         text = text.split("\n")
     for l in range(len(text)):
-        print(term.move_xy(coords[0], coords[1] + l), end="")
+        move_cursor(coords[0], coords[1] + l)
         print(text[l])
     if is_input:
         _ = input()
@@ -379,7 +385,7 @@ def render_results_frame(
     wpm: float,
     accuracy: float,
 ):
-    print(term.clear())
+    clear_terminal()
 
     print_results_stats(elapsed_time, wpm, accuracy, layout.result_stats_coords)
     print_results_graph(
@@ -391,16 +397,15 @@ def render_results_frame(
     )
 
 
-def handle_key(state: TestState, key: Keystroke, test_type: str) -> None:
+def handle_key(state: TestState, key: str, test_type: str) -> None:
     key_start_time = time.time()
 
     if not state.started:
         state.start_time = key_start_time
         state.started = True
 
-    if key.is_sequence:
-        if key.name == "KEY_BACKSPACE" and state.typed_text:
-            state.typed_text = state.typed_text[:-1]
+    if key in ('\x7f', '\x08') and state.typed_text:
+        state.typed_text = state.typed_text[:-1]
         return
 
     if not key.isprintable():
@@ -454,74 +459,104 @@ def write_json(path: str, data: dict[int, dict[str, int | float | str]]) -> None
         json.dump(data, f)
 
 
+def get_key(timeout: float | None = None) -> str | None:
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    try:
+        _ = tty.setraw(fd)
+        ready, _, _ = select.select([fd], [], [], timeout)
+        if not ready:
+            return None
+        ch: str = sys.stdin.read(1)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+    if ch == "\x03":
+        raise KeyboardInterrupt
+    return ch
+
+
 def test(test_type: str) -> None:
     layout = Layout()
 
-    with term.cbreak():
-        print(term.clear)
-        print("\x1b[6 q", end="", flush=True)  # set bar cursor
+    clear_terminal()
+    print("\x1b[6 q", end="", flush=True)  # set bar cursor
 
-        try:
-            state = TestState(target_text=get_target_text(WORDS_MODE_LEN))
+    try:
+        state = TestState(
+            target_text=get_target_text(
+                REFILL_THRESHOLD if test_type == "time" else WORDS_MODE_LEN
+            )
+        )
 
-            finished = False
-            first_frame = True
-            made_errors = 0
-            elapsed_time = 0
-            prev_elapsed_time = 0
-            wpm = 0
-            accuracy = 0
+        finished = False
+        first_frame = True
+        made_errors = 0
+        elapsed_time = 0
+        prev_elapsed_time = 0
+        wpm = 0
+        accuracy = 0
+        clear_terminal()
+        print_progress(accuracy, elapsed_time, wpm, test_type, TIME_MODE_LEN, layout)
+        made_errors = print_text(
+            state.target_text,
+            state.typed_text,
+            layout.target_coords,
+            layout.target_width,
+            layout.target_height,
+            layout.target_upper_cursor_padding,
+        )
 
-            while not finished:
-                key = term.inkey(timeout=0.05)
-                if key:
-                    handle_key(state, key, test_type)
+        while not finished:
+            key = get_key(timeout=0.1)
+            if key:
+                handle_key(state, key, test_type)
 
-                elapsed_time = time.time() - state.start_time if state.started else 0
-                wpm = compute_correct_wpm(
-                    state.target_text, state.typed_text, elapsed_time
+            elapsed_time = time.time() - state.start_time if state.started else 0
+
+            wpm = compute_correct_wpm(
+                state.target_text, state.typed_text, elapsed_time
+            )
+            accuracy = compute_accuracy(state.correct_keys, state.incorrect_keys)
+
+            if key or first_frame or int(elapsed_time) != int(prev_elapsed_time):
+                clear_terminal()
+                print_progress(
+                    accuracy, elapsed_time, wpm, test_type, TIME_MODE_LEN, layout
                 )
-                accuracy = compute_accuracy(state.correct_keys, state.incorrect_keys)
-
-                if key or first_frame or int(elapsed_time) != int(prev_elapsed_time):
-                    print(term.clear(), end="")
-                    print_progress(
-                        accuracy, elapsed_time, wpm, test_type, TIME_MODE_LEN, layout
-                    )
-                    made_errors = print_text(
-                        state.target_text,
-                        state.typed_text,
-                        layout.target_coords,
-                        layout.target_width,
-                        layout.target_height,
-                        layout.target_upper_cursor_padding,
-                    )
-                    first_frame = False
-
-                if int(elapsed_time) != int(prev_elapsed_time):
-                    state.wpm_samples.append(wpm)
-
-                prev_elapsed_time = elapsed_time
-
-                finished = check_finished(
-                    made_errors,
+                made_errors = print_text(
                     state.target_text,
                     state.typed_text,
-                    test_type,
-                    elapsed_time,
-                    TIME_MODE_LEN,
+                    layout.target_coords,
+                    layout.target_width,
+                    layout.target_height,
+                    layout.target_upper_cursor_padding,
                 )
+                first_frame = False
 
-            render_results_frame(
-                layout, state, SMOOTHING_WINDOW, elapsed_time, wpm, accuracy
+            if int(elapsed_time) != int(prev_elapsed_time):
+                state.wpm_samples.append(wpm)
+
+            prev_elapsed_time = elapsed_time
+
+            finished = check_finished(
+                made_errors,
+                state.target_text,
+                state.typed_text,
+                test_type,
+                elapsed_time,
+                TIME_MODE_LEN,
             )
-            test_len = WORDS_MODE_LEN if test_type == "words" else TIME_MODE_LEN
-            save_results(PROGRESS_FILE, time.time(), accuracy, wpm, test_type, test_len)
 
-        except KeyboardInterrupt:
-            pass
-        finally:
-            print("\x1b[0 q", end="", flush=True)  # reset cursor
+        render_results_frame(
+            layout, state, SMOOTHING_WINDOW, elapsed_time, wpm, accuracy
+        )
+        test_len = WORDS_MODE_LEN if test_type == "words" else TIME_MODE_LEN
+        save_results(PROGRESS_FILE, time.time(), accuracy, wpm, test_type, test_len)
+
+    except KeyboardInterrupt:
+        pass
+    finally:
+        print("\x1b[0 q", end="", flush=True)  # reset cursor
 
 
 def start_test(coords: tuple[int, int]) -> None:
