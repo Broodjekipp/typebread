@@ -489,7 +489,6 @@ def test(test_type: str) -> None:
         )
 
         finished = False
-        first_frame = True
         made_errors = 0
         elapsed_time = 0
         prev_elapsed_time = 0
@@ -518,7 +517,7 @@ def test(test_type: str) -> None:
             )
             accuracy = compute_accuracy(state.correct_keys, state.incorrect_keys)
 
-            if key or first_frame or int(elapsed_time) != int(prev_elapsed_time):
+            if key or int(elapsed_time) != int(prev_elapsed_time):
                 clear_terminal()
                 print_progress(
                     accuracy, elapsed_time, wpm, test_type, TIME_MODE_LEN, layout
@@ -531,7 +530,6 @@ def test(test_type: str) -> None:
                     layout.target_height,
                     layout.target_upper_cursor_padding,
                 )
-                first_frame = False
 
             if int(elapsed_time) != int(prev_elapsed_time):
                 state.wpm_samples.append(wpm)
