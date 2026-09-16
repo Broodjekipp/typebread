@@ -1,11 +1,13 @@
 from dataclasses import dataclass, field
-from blessed import Terminal
 from blessed.keyboard import Keystroke
-import plotille
+from blessed import Terminal
+from typing import cast
 import random
 import shutil
 import json
 import time
+
+from graph import make_data_graph, format_results_graph
 
 term = Terminal()
 
@@ -229,27 +231,18 @@ Acc:  {int(accuracy * 100)}%""",
 
 
 def print_results_graph(
-    wpm_samples: list[float],
+    data: list[float],
     coords: tuple[int, int],
     width: int,
     height: int,
     smoothing_window: int,
 ) -> None:
-    if not wpm_samples:  # No keypresses in the test
-        print_aligned("(no data - AFK detected)", coords)
-        return
-
-    smoothed = smooth_wpm_samples(wpm_samples, smoothing_window)
-
-    fig = plotille.Figure()
-    fig.width = width
-    fig.height = height
-    fig.set_x_limits(min_=0)
-    fig.set_y_limits(min_=0)
-    fig.origin = False
-    fig.plot(list(range(0, len(smoothed))), smoothed)
-
-    print_aligned(format_results_graph(fig.show()), coords)
+    print_aligned(
+        format_results_graph(
+            make_data_graph(data, width, height, smoothing_window), width
+        ),
+        coords,
+    )
 
 
 def print_aligned(
@@ -264,6 +257,7 @@ def print_aligned(
         _ = input()
     return
 
+
 """ Layout overview:
 Tests Started: 1327 
 Total length typed: 5:34:75
@@ -276,40 +270,10 @@ Records:
 [INSERT GIANT GRAPH OF TEST RESULTS]
 
 """
-def print_overview(layout) -> None:
-    pass
 
 
 def get_stats_from_progress_file() -> tuple[float, float, str, float]:
     raise NotImplementedError
-
-
-def format_results_graph(graph: str) -> str:
-    graph_lines: list[str] = graph.split("\n")
-    _ = graph_lines.pop(0)  # Remove top line
-    _ = graph_lines.pop(-1)  # Remove bottom line
-    max_digit_count = 0
-    float_digit_count = 0
-    int_digit_count = 0
-    for l in range(len(graph_lines[:-1])):
-        split_line = graph_lines[l].split("|")
-        number = split_line[0]
-        try:
-            int_digit_count = len(str(round(float(number))))
-        except ValueError:
-            int_digit_count = len(number)
-
-        float_digit_count = len(number)
-        if int_digit_count > max_digit_count:
-            max_digit_count = int_digit_count  # Get highest whole digit count
-        graph_lines[l] = (
-            f"{str(round(float(number))).ljust(max_digit_count)} |{split_line[1]}"  # Remove all spaces before the comma and add padding
-        )
-    graph_lines[-1] = "-" * (
-        len(graph_lines[-1]) - float_digit_count + int_digit_count - 8
-    )
-    graph_lines.insert(0, "(wpm)")  # Add y label
-    return "\n".join(graph_lines)
 
 
 def check_finished(
@@ -337,7 +301,7 @@ def check_finished(
 def get_target_text(word_count: int) -> str:
     try:
         with open(f"{WORDS_DIR}/{WORDS_FILE}", "r") as file:
-            data: dict[str, list[str]] = json.load(file)
+            data = cast(dict[str, list[str]], json.load(file))
     except FileNotFoundError:
         raise SystemExit(f"Word list not found: {WORDS_FILE}")
     except json.JSONDecodeError as e:
@@ -350,17 +314,6 @@ def get_target_text(word_count: int) -> str:
         word_count = len(words)
 
     return " ".join(random.sample(words, k=word_count)).lower()
-
-
-def smooth_wpm_samples(graph: list[float], smoothness: int) -> list[float]:
-    smooth_graph: list[float] = []
-    for i in range(len(graph)):
-        avg_range = graph[
-            max(0, i - smoothness // 2) : min(len(graph), i + smoothness // 2)
-        ]
-        new_item = sum(avg_range) / len(avg_range)
-        smooth_graph.append(new_item)
-    return smooth_graph
 
 
 def categorize_chars(target: str, typed: str) -> tuple[list[int], list[int], list[int]]:
@@ -477,7 +430,7 @@ def save_results(
         "wpm": wpm,
         "mode": f"{test_type} {test_len}",
         "datetime": timestamp,
-        "time": test_len
+        "time": test_len,
     }
     next_id = max((int(k) for k in file_data), default=-1) + 1
     file_data[next_id] = test_data
@@ -487,7 +440,7 @@ def save_results(
 def open_json(path: str) -> dict[int, dict[str, int | float | str]]:
     try:
         with open(path) as f:
-            raw = json.load(f)
+            raw = cast(dict[str, dict[str, int | float | str]], json.load(f))
     except FileNotFoundError:
         return {}
     except json.JSONDecodeError:
