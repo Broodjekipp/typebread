@@ -31,7 +31,7 @@ def clear_terminal():
 def print_aligned(
     text: str | list[str], coords: tuple[int, int], is_input: bool = False
 ) -> None:
-    if type(text) == str:
+    if isinstance(text, str):
         text = text.split("\n")
     for l in range(len(text)):
         move_cursor(coords[0], coords[1] + l)

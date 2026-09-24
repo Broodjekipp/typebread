@@ -92,7 +92,7 @@ def check_finished(
     if test_type == "words":
         if not made_errors and target == typed:
             return True
-        if len(typed) == len(target) + 1:
+        if len(typed) > len(target):
             return True
         return False
     elif test_type == "time":
@@ -110,6 +110,7 @@ def handle_key(state: TestState, key: str, test_type: str) -> None:
         state.started = True
 
     if key in ('\x7f', '\x08') and state.typed_text:
+        # Not removing correct_keys/incorrect_keys is intended.
         state.typed_text = state.typed_text[:-1]
         return
 
