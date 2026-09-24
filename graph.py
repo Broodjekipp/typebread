@@ -75,12 +75,17 @@ def make_braille_graph(data: list[int], width: int) -> str:
     return "\n".join(graph_list)
 
 
-def format_results_graph(graph: str, width: int) -> str:
+def format_results_graph(graph: str, max_wpms: int) -> str:
     graph_list = graph.split("\n")
-    graph_list = ["|" + i + "|" for i in graph_list]
-    graph_list.insert(0, f"+{"-" * width}+")
-    graph_list.append(f"+{"-" * width}+")
-    return "\n".join(graph_list)
+    graph_width = len(graph_list[0])
+    graph_height = len(graph_list)
+    fmt_graph_list: list[str] = []
+    for i in range(graph_height):
+        wpm_height = (graph_height - i - 0.5) * max_wpms / graph_height
+        fmt_graph_list.append(str(int(wpm_height)).rjust(3) + "|" + graph_list[i] + "|")
+    fmt_graph_list.insert(0, f"   +{"-" * graph_width}+")
+    fmt_graph_list.append(f"   +{"-" * graph_width}+")
+    return "\n".join(fmt_graph_list)
 
 
 def make_data_graph(

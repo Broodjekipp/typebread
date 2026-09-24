@@ -172,7 +172,9 @@ def print_results_graph(
 ) -> None:
     print_aligned(
         format_results_graph(
-            make_data_graph(data, width, height, smoothing_window), width
+            # The width and height should get minus the horizontal chars added by format_results_graph()
+            make_data_graph(data, width - 5, height - 2, smoothing_window),
+            int(max(data)),
         ),
         coords,
     )
