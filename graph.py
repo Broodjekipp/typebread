@@ -33,27 +33,44 @@ def scale_data_height(data: list[float | int], target_height: int) -> list[int]:
 
 
 def make_braille_graph(data: list[int], width: int) -> str:
-    # WARNING: this function does not support rapidly changing graph values, as they currently need to be on the same char
-    braille_chars_chart: list[list[str]] = [  # in [a][b], a is left and b is right
-        ["⠉", "⠑", "⠡", "⠁"],  # Upper dot
-        ["⠊", "⠒", "⠢", "⠂"],  # Middle dot
-        ["⠌", "⠔", "⠤", "⠄"],  # Bottom dot
+    if not data:
+        return ""
+
+    double_braille_chars: list[list[str]] = [
+        ["⠉", "⠑", "⠡"],  # Upper dot
+        ["⠊", "⠒", "⠢"],  # Middle dot
+        ["⠌", "⠔", "⠤"],  # Bottom dot
     ]
-    graph_list: list[str] = ["" for _ in range(max(data) // 3 + 1)]
-    for i in range(0, len(data), 2):
-        if i + 1 < len(data):
-            height_chars = max(data[i], data[i + 1]) // 3
-            braille_char = braille_chars_chart[data[i] % 3][data[i + 1] % 3]
+    single_braille_chars: list[list[str]] = [["⠁", "⠂", "⠄"], ["⠈", "⠐", "⠠"]]
+
+    num_rows = max(data) // 3 + 1
+    graph_list: list[str] = ["" for _ in range(num_rows)]
+
+    i = 0
+    col = 0
+    n = len(data)
+    while i < n:
+        if i + 1 >= n:
+            height = data[i] // 3
+            char = single_braille_chars[0][data[i] % 3]
+            graph_list[height] = graph_list[height].ljust(col) + char
+            i += 1
         else:
-            height_chars = data[i] // 3
-            braille_char = braille_chars_chart[data[i] % 3][3]
+            h1, h2 = data[i] // 3, data[i + 1] // 3
+            if h1 == h2:
+                char = double_braille_chars[data[i] % 3][data[i + 1] % 3]
+                graph_list[h1] = graph_list[h1].ljust(col) + char
+            else:
+                c1 = single_braille_chars[0][data[i] % 3]
+                c2 = single_braille_chars[1][data[i + 1] % 3]
+                graph_list[h1] = graph_list[h1].ljust(col) + c1
+                graph_list[h2] = graph_list[h2].ljust(col) + c2
+            i += 2
+        col += 1
 
-        while len(graph_list[height_chars]) < i // 2:
-            graph_list[height_chars] += " "
-        graph_list[height_chars] += braille_char
+    for r in range(len(graph_list)):
+        graph_list[r] = graph_list[r].ljust(width)
 
-    for i in range(len(graph_list)):
-        graph_list[i] = graph_list[i].ljust(width, " ")
     graph_list.reverse()
     return "\n".join(graph_list)
 
